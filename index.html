@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>入門用 Web アプリ（キャンバスにお絵描き & コマンド描画）</title>
+  <style>
+    :root { --bg:#f7f7f8; --card:#ffffff; --text:#222; --muted:#666; --border:#e5e7eb; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Noto Sans JP, Helvetica, Arial}
+    header{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--border);padding:12px 16px}
+    h1{margin:0;font-size:18px}
+    main{max-width:980px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 20px rgba(0,0,0,.04)}
+    .card .hd{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600}
+    .card .bd{padding:16px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    button, input, textarea, select{font:inherit}
+    button{padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:#fff;cursor:pointer}
+    button:active{transform:translateY(1px)}
+    textarea{width:100%;min-height:140px;resize:vertical;border-radius:12px;border:1px solid var(--border);padding:10px}
+    canvas{background:#fff;border:1px solid var(--border);border-radius:12px;max-width:100%}
+    .muted{color:var(--muted)}
+    .grid{display:grid;gap:12px;grid-template-columns:1fr}
+    @media (min-width:900px){ .grid{grid-template-columns:1fr 1fr} }
+    code{background:#f0f2f5;border-radius:6px;padding:2px 6px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>入門用 Web アプリ（ローカルで動かすだけでOK）</h1>
+  </header>
+  <main>
+
+    <section class="card">
+      <div class="hd">① カウンター（超ミニSPA）</div>
+      <div class="bd row">
+        <button id="dec">−1</button>
+        <div id="count" style="font-size:28px;min-width:3ch;text-align:center">0</div>
+        <button id="inc">+1</button>
+        <button id="reset" title="0に戻す">Reset</button>
+        <span class="muted">← クリックで数が増減。JavaScriptでDOMを更新する基本練習。</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hd">② お絵描きキャンバス（ドラッグで描画 / PNG保存）</div>
+      <div class="bd">
+        <div class="row" style="margin-bottom:8px">
+          <label>線の太さ <input id="penWidth" type="range" min="1" max="20" value="4"></label>
+          <button id="clear">クリア</button>
+          <button id="save">PNG保存</button>
+          <span class="muted">ドラッグで線を引けます。保存ボタンで画像としてダウンロード。</span>
+        </div>
+        <canvas id="pad" width="720" height="420"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hd">③ 簡易プロッタ（コマンドで線を引く）</div>
+      <div class="bd">
+        <div class="grid">
+          <div>
+            <p class="muted">下のテキストに「コマンド」を書いて <b>描画</b> を押すと右のキャンバスに線が引かれます。座標は左上が (0,0)。
+            <br>サポート: <code>PU</code>（ペン上げ）, <code>PD</code>（ペン下げ）, <code>M x y</code>（移動）, <code>D x y</code>（線で移動）, <code>R dx dy</code>（相対移動&描画）, <code>S n</code>（スケール）</p>
+            <textarea id="prog"></textarea>
+            <div class="row" style="margin-top:8px">
+              <button id="draw">描画</button>
+              <button id="sampleSquare">サンプル：正方形</button>
+              <button id="sampleA">サンプル：Aっぽい形</button>
+            </div>
+          </div>
+          <div>
+            <canvas id="plot" width="720" height="420"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hd">使い方</div>
+      <div class="bd">
+        <ol>
+          <li>このファイルを <b>index.html</b> として保存し、ダブルクリックでブラウザ（Chromeなど）で開くだけ。</li>
+          <li>③のコマンド欄に指示を書き、<b>描画</b> を押すと右のキャンバスに描かれます。</li>
+          <li>コマンド例：<pre>PU
+M 100 300
+PD
+D 200 100
+D 300 300
+PU
+M 160 220
+PD
+D 240 220
+</pre></li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // ① Counter
+    const $ = (q)=>document.querySelector(q);
+    let n = 0;
+    const countEl = $('#count');
+    const set = (v)=>{ n=v; countEl.textContent = String(n); };
+    $('#inc').onclick = ()=> set(n+1);
+    $('#dec').onclick = ()=> set(n-1);
+    $('#reset').onclick = ()=> set(0);
+
+    // ② Drawing pad
+    (function(){
+      const c = document.getElementById('pad');
+      const ctx = c.getContext('2d');
+      let drawing = false, px=0, py=0;
+      const get = (e)=>{
+        const r = c.getBoundingClientRect();
+        return {
+          x: (e.touches? e.touches[0].clientX: e.clientX) - r.left,
+          y: (e.touches? e.touches[0].clientY: e.clientY) - r.top
+        };
+      };
+      const start = (e)=>{ drawing = true; const p=get(e); px=p.x; py=p.y; };
+      const move  = (e)=>{ if(!drawing) return; const p=get(e); ctx.lineWidth = +document.getElementById('penWidth').value; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(p.x,p.y); ctx.stroke(); px=p.x; py=p.y; };
+      const end   = ()=>{ drawing=false; };
+      c.addEventListener('mousedown', start); c.addEventListener('mousemove', move); window.addEventListener('mouseup', end);
+      c.addEventListener('touchstart', (e)=>{e.preventDefault(); start(e);}, {passive:false});
+      c.addEventListener('touchmove',  (e)=>{e.preventDefault(); move(e);}, {passive:false});
+      c.addEventListener('touchend',   (e)=>{e.preventDefault(); end(e);}, {passive:false});
+      document.getElementById('clear').onclick = ()=>{ ctx.clearRect(0,0,c.width,c.height); };
+      document.getElementById('save').onclick = ()=>{
+        const a=document.createElement('a'); a.download='drawing.png'; a.href=c.toDataURL('image/png'); a.click();
+      };
+    })();
+
+    // ③ Simple plotter
+    (function(){
+      const c = document.getElementById('plot');
+      const ctx = c.getContext('2d');
+      const prog = document.getElementById('prog');
+      let scale = 1;
+
+      function drawProgram(text){
+        ctx.clearRect(0,0,c.width,c.height);
+        ctx.lineWidth = 2; ctx.lineCap='round'; ctx.strokeStyle = '#111';
+        let x=0, y=0, pen=false;
+        const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(s=>s && !s.startsWith('#'));
+        for(const line of lines){
+          const tok = line.split(/\s+/);
+          const op = tok[0].toUpperCase();
+          const a = Number(tok[1]), b = Number(tok[2]);
+          if(op==='PU'){ pen=false; continue; }
+          if(op==='PD'){ pen=true; continue; }
+          if(op==='S'){ scale = Number(tok[1])||1; continue; }
+          if(op==='M' && tok.length>=3){ x = a*scale; y = b*scale; continue; }
+          if(op==='D' && tok.length>=3){ const nx=a*scale, ny=b*scale; if(pen){ ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(nx,ny); ctx.stroke(); } x=nx; y=ny; continue; }
+          if(op==='R' && tok.length>=3){ const nx = x + a*scale, ny = y + b*scale; if(pen){ ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(nx,ny); ctx.stroke(); } x=nx; y=ny; continue; }
+        }
+      }
+
+      document.getElementById('draw').onclick = ()=> drawProgram(prog.value);
+      document.getElementById('sampleSquare').onclick = ()=>{
+        prog.value = `# 正方形 200x200
+S 1
+PU
+M 100 100
+PD
+R 200 0
+R 0 200
+R -200 0
+R 0 -200`;
+        drawProgram(prog.value);
+      };
+      document.getElementById('sampleA').onclick = ()=>{
+        prog.value = `# Aっぽい形
+PU
+M 120 320
+PD
+D 220 100
+D 320 320
+PU
+M 160 220
+PD
+D 280 220`;
+        drawProgram(prog.value);
+      };
+
+      // 初期値
+      document.getElementById('sampleSquare').click();
+    })();
+  </script>
+</body>
+</html>
